@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAP Infopage Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "72", "72full", Arial, Helvetica, sans-serif;
+      background: #f5f6f7;
+      color: #32363a;
+    }
+
+    /* ── Loading state ─────────────────────────────────────────────── */
+    #loading-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .75rem;
+      height: 100vh;
+      font-size: 1rem;
+      color: #6a6d70;
+    }
+    #loading-banner::before {
+      content: "";
+      width: 1.25rem;
+      height: 1.25rem;
+      border: 2px solid #0070f2;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Error state ────────────────────────────────────────────────── */
+    #error-banner {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: .75rem;
+      height: 100vh;
+      padding: 2rem;
+      text-align: center;
+    }
+    #error-banner h2 {
+      margin: 0;
+      font-size: 1.25rem;
+      color: #bb0000;
+    }
+    #error-banner p {
+      margin: 0;
+      font-size: .9rem;
+      color: #6a6d70;
+      max-width: 480px;
+    }
+
+    /* ── Content container ──────────────────────────────────────────── */
+    #document-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+      background: #fff;
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loading-banner">Loading infopage…</div>
+
+  <div id="error-banner">
+    <h2 id="error-title">Error</h2>
+    <p  id="error-detail"></p>
+  </div>
+
+  <div id="document-container"></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var params    = new URLSearchParams(window.location.search);
+      var id        = params.get("id");
+      var loading   = document.getElementById("loading-banner");
+      var errBanner = document.getElementById("error-banner");
+      var errTitle  = document.getElementById("error-title");
+      var errDetail = document.getElementById("error-detail");
+      var container = document.getElementById("document-container");
+
+      function showError(title, detail) {
+        loading.style.display = "none";
+        errBanner.style.display = "flex";
+        errTitle.textContent  = title  || "Error";
+        errDetail.textContent = detail || "";
+      }
+
+      // ── 1. Validate the id query parameter ──────────────────────────
+      if (!id) {
+        showError(
+          "No infopage selected",
+          "Open this page with a valid ?id= parameter — e.g. ?id=7740001234"
+        );
+        return;
+      }
+      if (!/^\d+$/.test(id)) {
+        showError(
+          "Invalid ID “" + id + "”",
+          "The id parameter must contain digits only."
+        );
+        return;
+      }
+
+      // ── 2. Fetch docs/<id>.html ─────────────────────────────────────
+      var fileUrl = "./docs/" + id + ".html";
+
+      fetch(fileUrl)
+        .then(function (r) {
+          if (r.status === 404) {
+            throw new Error("Infopage “" + id + "” not found (404). It may not have been published yet.");
+          }
+          if (!r.ok) {
+            throw new Error("The server returned HTTP " + r.status + " for this infopage.");
+          }
+          return r.text();
+        })
+
+        // ── 3. Rewrite relative asset paths and inject HTML ───────────
+        .then(function (html) {
+          // When docs/<id>.html is injected into this document (at the repo
+          // root), relative paths like "./7740001234-assets/img.png" would
+          // resolve against "/" instead of "./docs/".  We prefix them so they
+          // resolve correctly regardless of where index.html lives.
+          //
+          // Only relative paths are rewritten; absolute URLs, data URIs,
+          // fragment-only hrefs, and paths already starting with "docs/" are
+          // left untouched.
+          var base = "./docs/";
+          html = html.replace(
+            /\b(src|href)=(["'])(?!https?:\/\/|\/\/|data:|#|\.\/docs\/)([^"'#?>\s]+)\2/gi,
+            function (_, attr, q, path) {
+              return attr + "=" + q + base + path.replace(/^\.\//, "") + q;
+            }
+          );
+
+          // ── 4. Inject into the container ───────────────────────────
+          loading.style.display = "none";
+          container.innerHTML   = html;
+
+          // Promote the page title from the injected content, if any
+          var innerTitle = container.querySelector("title");
+          if (innerTitle) {
+            document.title = innerTitle.textContent.trim() || document.title;
+            innerTitle.remove();
+          }
+
+          // Re-execute inline <script> tags — innerHTML does not run them
+          container.querySelectorAll("script").forEach(function (old) {
+            var neo = document.createElement("script");
+            if (old.src) {
+              neo.src = old.src;
+            } else {
+              neo.textContent = old.textContent;
+            }
+            document.head.appendChild(neo);
+            old.parentNode.removeChild(old);
+          });
+        })
+
+        // ── 4. Surface errors ─────────────────────────────────────────
+        .catch(function (err) {
+          showError("Could not load infopage", err.message);
+        });
+
+    }());
+  </script>
+
+</body>
+</html>
